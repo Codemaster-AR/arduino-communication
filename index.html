@@ -1,209 +1,167 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MKR Cloud Controller</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-</head>
-<body class="bg-slate-950 text-slate-100 font-sans">
-    <div id="root"></div>
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { Activity, Radio, Bell, Trash2, Wifi, Lock } from 'lucide-react';
 
-    <!-- Firebase SDKs (Modular Version) -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-        // Integrated Agronauts Config based on your snippet
-        const firebaseConfig = {
-            apiKey: "AIzaSyAcvUkTClt50kaJkwBnpU-ZeyqFlflxG10",
-            authDomain: "agronauts-ea979.firebaseapp.com",
-            projectId: "agronauts-ea979",
-            storageBucket: "agronauts-ea979.firebasestorage.app",
-            messagingSenderId: "402858856046",
-            appId: "1:402858856046:web:cd04957b6ca2d19353607f",
-            measurementId: "G-G2LWBQMKV5"
-        };
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [currentCommand, setCurrentCommand] = useState('NONE');
+  const [isLocked, setIsLocked] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-        // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error("Auth error:", e);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
 
-        let currentCommand = "NONE";
-        let userUid = null;
+  useEffect(() => {
+    if (!user) return;
+    
+    // Path matches the index.html and Arduino code exactly
+    const commandDoc = doc(db, 'artifacts', appId, 'public', 'data', 'controls', 'state');
+    
+    let lockTimeout;
 
-        const render = () => {
-            const root = document.getElementById('root');
-            root.innerHTML = `
-                <div class="min-h-screen flex items-center justify-center p-4">
-                    <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden text-center">
-                        
-                        <!-- Status Bar -->
-                        <div class="flex justify-between items-center mb-8">
-                            <div class="flex items-center gap-2">
-                                <div id="status-dot" class="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.5)]"></div>
-                                <span id="status-text" class="text-[10px] font-bold tracking-widest text-slate-400 uppercase">Connecting...</span>
-                            </div>
-                            <i data-lucide="wifi" class="text-slate-700 w-4 h-4"></i>
-                        </div>
+    const unsubscribe = onSnapshot(commandDoc, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const serverTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
+        const localTime = Date.now();
+        const timeDiff = localTime - serverTime;
 
-                        <!-- Header -->
-                        <h1 class="text-3xl font-black italic tracking-tighter mb-1 uppercase text-white">MKR Controller</h1>
-                        <p class="text-slate-500 text-xs mb-8 tracking-wide uppercase font-bold">Project: Agronauts</p>
+        // Global 4-second lockout logic
+        if (timeDiff < 4000 && timeDiff >= 0) {
+          const remainingLock = 4000 - timeDiff;
+          setIsLocked(true);
+          if (lockTimeout) clearTimeout(lockTimeout);
+          lockTimeout = setTimeout(() => setIsLocked(false), remainingLock);
+        }
 
-                        <!-- Error Banner for Configuration Issues (Auth Not Enabled) -->
-                        <div id="auth-error-notice" class="hidden mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-2xl text-[10px] leading-relaxed text-red-100 text-left">
-                            <div class="flex gap-2 items-start">
-                                <i data-lucide="alert-circle" class="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5"></i>
-                                <div>
-                                    <strong class="block mb-1 text-red-400 uppercase tracking-tight">Setup Required</strong>
-                                    The error <code class="bg-black/30 px-1 rounded text-red-300 italic">auth/configuration-not-found</code> means Anonymous sign-in is disabled.
-                                    <ol class="list-decimal ml-4 mt-2 space-y-2">
-                                        <li>Open your <a href="https://console.firebase.google.com/project/agronauts-ea979/authentication/providers" target="_blank" class="underline text-cyan-400 font-bold">Firebase Auth Dashboard</a></li>
-                                        <li>Click <b>Add new provider</b> (or "Get Started" if first time)</li>
-                                        <li>Choose <b>Anonymous</b>, toggle <b>Enable</b>, and hit <b>Save</b></li>
-                                        <li>Come back here and refresh this page</li>
-                                    </ol>
-                                </div>
-                            </div>
-                        </div>
+        setCurrentCommand(String(data.currentCommand || 'NONE'));
+      }
+    }, (err) => console.error("Sync error:", err));
 
-                        <!-- Main Controls -->
-                        <div class="grid grid-cols-2 gap-4 mb-10">
-                            <button onclick="updateCloud('RED')" class="flex flex-col items-center gap-3 bg-red-500/10 border border-red-500/20 p-6 rounded-3xl hover:bg-red-600 transition-all active:scale-95 group">
-                                <i data-lucide="radio" class="text-red-500 group-hover:text-white"></i>
-                                <span class="font-bold text-xs uppercase">Red</span>
-                            </button>
-                            <button onclick="updateCloud('BLUE')" class="flex flex-col items-center gap-3 bg-blue-500/10 border border-blue-500/20 p-6 rounded-3xl hover:bg-blue-600 transition-all active:scale-95 group">
-                                <i data-lucide="activity" class="text-blue-500 group-hover:text-white"></i>
-                                <span class="font-bold text-xs uppercase">Blue</span>
-                            </button>
-                            <button onclick="updateCloud('ALARM')" class="flex flex-col items-center gap-3 bg-orange-500/10 border border-orange-500/20 p-6 rounded-3xl hover:bg-orange-600 transition-all active:scale-95 group">
-                                <i data-lucide="bell" class="text-orange-500 group-hover:text-white"></i>
-                                <span class="font-bold text-xs uppercase">Alarm</span>
-                            </button>
-                            <button onclick="updateCloud('CLEAR')" class="flex flex-col items-center gap-3 bg-slate-800/50 border border-slate-700 p-6 rounded-3xl hover:bg-slate-700 transition-all active:scale-95 group">
-                                <i data-lucide="trash-2" class="text-slate-400 group-hover:text-white"></i>
-                                <span class="font-bold text-xs uppercase">Clear</span>
-                            </button>
-                        </div>
+    return () => {
+      unsubscribe();
+      if (lockTimeout) clearTimeout(lockTimeout);
+    };
+  }, [user]);
 
-                        <!-- Status Display -->
-                        <div class="bg-black/40 rounded-3xl p-6 border border-white/5 relative mb-8 text-left">
-                            <p class="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-600 mb-2">Live Cloud State</p>
-                            <div id="cmd-display" class="text-4xl font-mono font-bold text-cyan-400 tracking-tighter uppercase">
-                                ${currentCommand}
-                            </div>
-                            <div id="uid-display" class="text-[8px] font-mono text-slate-700 mt-2 truncate">
-                                UID: ${userUid ? userUid : 'Not Auth'}
-                            </div>
-                        </div>
+  const setCommand = async (cmd) => {
+    if (!user || isLocked) return;
+    setIsSyncing(true);
+    // Optimistic lock for local responsiveness
+    setIsLocked(true);
 
-                        <!-- Hardware Link -->
-                        <a href="https://github.com/Codemaster-AR/arduino-communication/blob/main/README.md" 
-                           target="_blank" 
-                           class="inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-cyan-500 hover:text-cyan-400 transition-colors py-2 px-4 rounded-full bg-cyan-500/5 border border-cyan-500/20 mb-6">
-                            <i data-lucide="cpu" class="w-3 h-3"></i>
-                            Set up on Arduino
-                        </a>
+    try {
+      const commandDoc = doc(db, 'artifacts', appId, 'public', 'data', 'controls', 'state');
+      await setDoc(commandDoc, { 
+        currentCommand: cmd,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (err) {
+      console.error("Write error:", err);
+      setIsLocked(false);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
-                        <!-- Footer -->
-                        <div class="mt-4 pt-6 border-t border-slate-800 text-center">
-                            <p class="text-[8px] text-slate-600 uppercase font-bold tracking-widest">
-                                Firestore Path: controls/state
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            `;
-            lucide.createIcons();
-        };
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-sans">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden">
+        
+        {/* Lock Overlay Indicator */}
+        {isLocked && (
+            <div className="absolute top-6 right-12 flex items-center gap-1.5 text-orange-500 animate-pulse">
+                <Lock size={12} />
+                <span className="text-[10px] font-black uppercase tracking-widest">Locked</span>
+            </div>
+        )}
 
-        // Firebase Auth State Listener
-        onAuthStateChanged(auth, (user) => {
-            const dot = document.getElementById('status-dot');
-            const text = document.getElementById('status-text');
-            const uidText = document.getElementById('uid-display');
+        <div className="flex justify-between items-center mb-8">
+          <div className="flex items-center gap-2">
+            <div className={`w-2.5 h-2.5 ${user ? 'bg-green-500' : 'bg-red-500'} rounded-full shadow-[0_0_8px_rgba(34,197,94,0.6)]`} />
+            <span className="text-[10px] font-bold tracking-widest text-slate-400 uppercase">System Online</span>
+          </div>
+          <Wifi size={16} className="text-slate-700" />
+        </div>
 
-            if (user) {
-                userUid = user.uid;
-                if(dot) {
-                    dot.classList.replace('bg-red-500', 'bg-green-500');
-                    dot.style.boxShadow = '0 0 12px rgba(34,197,94,0.6)';
-                }
-                if(text) text.innerText = 'Online';
-                if(uidText) uidText.innerText = `UID: ${user.uid}`;
-                
-                // Start listening to the database once authenticated
-                listenToCloud();
-            } else {
-                userUid = null;
-                if(dot) dot.classList.replace('bg-green-500', 'bg-red-500');
-                if(text) text.innerText = 'Disconnected';
-            }
-        });
+        <h1 className="text-3xl font-black italic tracking-tighter mb-1 uppercase">MKR Controller</h1>
+        <p className="text-slate-500 text-xs mb-8 tracking-wide">Cloud Sync Protocol v3.0 (Sync Lock)</p>
 
-        // Function to listen to Firestore updates
-        const listenToCloud = () => {
-            const docRef = doc(db, "controls", "state");
-            onSnapshot(docRef, (snap) => {
-                if (snap.exists()) {
-                    currentCommand = snap.data().currentCommand || "NONE";
-                    const display = document.getElementById('cmd-display');
-                    if (display) display.innerText = currentCommand;
-                }
-            }, (error) => {
-                console.error("Firestore read error:", error);
-            });
-        };
+        <div className="grid grid-cols-2 gap-4 mb-10">
+          <button 
+            disabled={isLocked}
+            onClick={() => setCommand('RED')} 
+            className={`flex flex-col items-center gap-3 bg-red-500/10 border border-red-500/20 p-6 rounded-3xl transition-all group active:scale-95 ${isLocked ? 'opacity-30 grayscale cursor-not-allowed' : 'hover:bg-red-600 hover:text-white'}`}
+          >
+            <Radio size={24} className="text-red-500 group-hover:text-white" />
+            <span className="font-bold text-xs uppercase">Red</span>
+          </button>
+          
+          <button 
+            disabled={isLocked}
+            onClick={() => setCommand('BLUE')} 
+            className={`flex flex-col items-center gap-3 bg-blue-500/10 border border-blue-500/20 p-6 rounded-3xl transition-all group active:scale-95 ${isLocked ? 'opacity-30 grayscale cursor-not-allowed' : 'hover:bg-blue-600 hover:text-white'}`}
+          >
+            <Activity size={24} className="text-blue-500 group-hover:text-white" />
+            <span className="font-bold text-xs uppercase">Blue</span>
+          </button>
 
-        // Function to update Firestore
-        window.updateCloud = async (cmd) => {
-            if (!auth.currentUser) {
-                alert("Please enable Anonymous Auth in Firebase and refresh.");
-                return;
-            }
-            try {
-                const docRef = doc(db, "controls", "state"); 
-                await setDoc(docRef, { 
-                    currentCommand: cmd,
-                    updatedAt: new Date().toISOString(),
-                    lastUpdatedBy: auth.currentUser.uid
-                }, { merge: true });
-            } catch (e) {
-                console.error("Write failed:", e);
-                if (e.code === 'permission-denied') {
-                    alert("Firestore Permission Denied. Check your Database Rules.");
-                }
-            }
-        };
+          <button 
+            disabled={isLocked}
+            onClick={() => setCommand('ALARM')} 
+            className={`flex flex-col items-center gap-3 bg-orange-500/10 border border-orange-500/20 p-6 rounded-3xl transition-all group active:scale-95 ${isLocked ? 'opacity-30 grayscale cursor-not-allowed' : 'hover:bg-orange-600 hover:text-white'}`}
+          >
+            <Bell size={24} className="text-orange-500 group-hover:text-white" />
+            <span className="font-bold text-xs uppercase">Alarm</span>
+          </button>
 
-        // Sign in function
-        const signIn = async () => {
-            try {
-                await signInAnonymously(auth);
-            } catch (err) {
-                console.error("SignIn failed:", err);
-                const text = document.getElementById('status-text');
-                if (text) text.innerText = 'Auth Required';
-                
-                if (err.code === 'auth/configuration-not-found') {
-                    const notice = document.getElementById('auth-error-notice');
-                    if (notice) {
-                        notice.classList.remove('hidden');
-                        lucide.createIcons();
-                    }
-                }
-            }
-        };
+          <button 
+            disabled={isLocked}
+            onClick={() => setCommand('CLEAR')} 
+            className={`flex flex-col items-center gap-3 bg-slate-800/50 border border-slate-700 p-6 rounded-3xl transition-all group active:scale-95 ${isLocked ? 'opacity-30 grayscale cursor-not-allowed' : 'hover:bg-slate-700 hover:text-white'}`}
+          >
+            <Trash2 size={24} className="text-slate-400 group-hover:text-white" />
+            <span className="font-bold text-xs uppercase">Clear</span>
+          </button>
+        </div>
 
-        // Initial Render and Sign In call
-        render();
-        signIn();
+        <div className="bg-black/40 rounded-3xl p-6 border border-white/5 relative">
+          {isSyncing && <div className="absolute inset-0 bg-cyan-500/10 animate-pulse" />}
+          <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-600 mb-2">Live Cloud State</p>
+          <div className="text-4xl font-mono font-bold text-cyan-400 tracking-tighter uppercase">
+            {currentCommand}
+          </div>
+        </div>
 
-    </script>
-</body>
-</html>
+        <div className="mt-8 text-center">
+            <p className="text-[8px] text-slate-700 uppercase tracking-widest leading-relaxed">
+                App ID: {appId}<br/>
+                Sync: Global 4s Cooldown Active
+            </p>
+        </div>
+      </div>
+    </div>
+  );
+}
