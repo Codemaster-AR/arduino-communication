@@ -1,4 +1,4 @@
-Here is a professionally formatted version of your `README.md`. I have organized it into logical sections, cleaned up the instructions, and highlighted the necessary hardware/software requirements.
+
 
 ---
 
@@ -171,4 +171,3 @@ void triggerAlarm() {
 * **LED Indicators:** RGB LEDs change color based on the AI's response.
 * **Audible Alarm:** Uses the onboard buzzer for the "ALARM" state.
 
-Would you like me to help you set up a `secrets.h` file to hide your WiFi and API credentials?
