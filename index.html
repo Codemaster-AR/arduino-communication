@@ -39,7 +39,7 @@
             const root = document.getElementById('root');
             root.innerHTML = `
                 <div class="min-h-screen flex items-center justify-center p-4">
-                    <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden">
+                    <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden text-center">
                         
                         <!-- Status Bar -->
                         <div class="flex justify-between items-center mb-8">
@@ -55,7 +55,7 @@
                         <p class="text-slate-500 text-xs mb-8 tracking-wide uppercase font-bold">Project: Agronauts</p>
 
                         <!-- Error Banner for Configuration Issues (Auth Not Enabled) -->
-                        <div id="auth-error-notice" class="hidden mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-2xl text-[10px] leading-relaxed text-red-100">
+                        <div id="auth-error-notice" class="hidden mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-2xl text-[10px] leading-relaxed text-red-100 text-left">
                             <div class="flex gap-2 items-start">
                                 <i data-lucide="alert-circle" class="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5"></i>
                                 <div>
@@ -92,7 +92,7 @@
                         </div>
 
                         <!-- Status Display -->
-                        <div class="bg-black/40 rounded-3xl p-6 border border-white/5 relative">
+                        <div class="bg-black/40 rounded-3xl p-6 border border-white/5 relative mb-8 text-left">
                             <p class="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-600 mb-2">Live Cloud State</p>
                             <div id="cmd-display" class="text-4xl font-mono font-bold text-cyan-400 tracking-tighter uppercase">
                                 ${currentCommand}
@@ -102,8 +102,16 @@
                             </div>
                         </div>
 
+                        <!-- Hardware Link -->
+                        <a href="https://github.com/Codemaster-AR/arduino-communication/blob/main/README.md" 
+                           target="_blank" 
+                           class="inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-cyan-500 hover:text-cyan-400 transition-colors py-2 px-4 rounded-full bg-cyan-500/5 border border-cyan-500/20 mb-6">
+                            <i data-lucide="cpu" class="w-3 h-3"></i>
+                            Set up on Arduino
+                        </a>
+
                         <!-- Footer -->
-                        <div class="mt-8 pt-6 border-t border-slate-800 text-center">
+                        <div class="mt-4 pt-6 border-t border-slate-800 text-center">
                             <p class="text-[8px] text-slate-600 uppercase font-bold tracking-widest">
                                 Firestore Path: controls/state
                             </p>
@@ -135,7 +143,6 @@
                 userUid = null;
                 if(dot) dot.classList.replace('bg-green-500', 'bg-red-500');
                 if(text) text.innerText = 'Disconnected';
-                // Note: We don't automatically call signIn() here to avoid infinite loops if it fails
             }
         });
 
@@ -150,9 +157,6 @@
                 }
             }, (error) => {
                 console.error("Firestore read error:", error);
-                if (error.code === 'permission-denied') {
-                    console.error("Rules check needed: allow read, write: if request.auth != null;");
-                }
             });
         };
 
@@ -186,12 +190,11 @@
                 const text = document.getElementById('status-text');
                 if (text) text.innerText = 'Auth Required';
                 
-                // Show visual guidance for the specific configuration error
                 if (err.code === 'auth/configuration-not-found') {
                     const notice = document.getElementById('auth-error-notice');
                     if (notice) {
                         notice.classList.remove('hidden');
-                        lucide.createIcons(); // Update icons inside the newly visible block
+                        lucide.createIcons();
                     }
                 }
             }
