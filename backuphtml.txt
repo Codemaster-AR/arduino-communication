@@ -1,0 +1,167 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { Activity, Radio, Bell, Trash2, Wifi, Lock } from 'lucide-react';
+
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [currentCommand, setCurrentCommand] = useState('NONE');
+  const [isLocked, setIsLocked] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error("Auth error:", e);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    
+    // Path matches the index.html and Arduino code exactly
+    const commandDoc = doc(db, 'artifacts', appId, 'public', 'data', 'controls', 'state');
+    
+    let lockTimeout;
+
+    const unsubscribe = onSnapshot(commandDoc, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const serverTime = data.updatedAt ? new Date(data.updatedAt).getTime() : 0;
+        const localTime = Date.now();
+        const timeDiff = localTime - serverTime;
+
+        // Global 4-second lockout logic
+        if (timeDiff < 4000 && timeDiff >= 0) {
+          const remainingLock = 4000 - timeDiff;
+          setIsLocked(true);
+          if (lockTimeout) clearTimeout(lockTimeout);
+          lockTimeout = setTimeout(() => setIsLocked(false), remainingLock);
+        }
+
+        setCurrentCommand(String(data.currentCommand || 'NONE'));
+      }
+    }, (err) => console.error("Sync error:", err));
+
+    return () => {
+      unsubscribe();
+      if (lockTimeout) clearTimeout(lockTimeout);
+    };
+  }, [user]);
+
+  const setCommand = async (cmd) => {
+    if (!user || isLocked) return;
+    setIsSyncing(true);
+    // Optimistic lock for local responsiveness
+    setIsLocked(true);
+
+    try {
+      const commandDoc = doc(db, 'artifacts', appId, 'public', 'data', 'controls', 'state');
+      await setDoc(commandDoc, { 
+        currentCommand: cmd,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch (err) {
+      console.error("Write error:", err);
+      setIsLocked(false);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-sans">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden">
+        
+        {/* Lock Overlay Indicator */}
+        {isLocked && (
+            <div className="absolute top-6 right-12 flex items-center gap-1.5 text-orange-500 animate-pulse">
+                <Lock size={12} />
+                <span className="text-[10px] font-black uppercase tracking-widest">Locked</span>
+            </div>
+        )}
+
+        <div className="flex justify-between items-center mb-8">
+          <div className="flex items-center gap-2">
+            <div className={`w-2.5 h-2.5 ${user ? 'bg-green-500' : 'bg-red-500'} rounded-full shadow-[0_0_8px_rgba(34,197,94,0.6)]`} />
+            <span className="text-[10px] font-bold tracking-widest text-slate-400 uppercase">System Online</span>
+          </div>
+          <Wifi size={16} className="text-slate-700" />
+        </div>
+
+        <h1 className="text-3xl font-black italic tracking-tighter mb-1 uppercase">MKR Controller</h1>
+        <p className="text-slate-500 text-xs mb-8 tracking-wide">Cloud Sync Protocol v3.0 (Sync Lock)</p>
+
+        <div className="grid grid-cols-2 gap-4 mb-10">
+          <button 
+            disabled={isLocked}
+            onClick={() => setCommand('RED')} 
+            className={`flex flex-col items-center gap-3 bg-red-500/10 border border-red-500/20 p-6 rounded-3xl transition-all group active:scale-95 ${isLocked ? 'opacity-30 grayscale cursor-not-allowed' : 'hover:bg-red-600 hover:text-white'}`}
+          >
+            <Radio size={24} className="text-red-500 group-hover:text-white" />
+            <span className="font-bold text-xs uppercase">Red</span>
+          </button>
+          
+          <button 
+            disabled={isLocked}
+            onClick={() => setCommand('BLUE')} 
+            className={`flex flex-col items-center gap-3 bg-blue-500/10 border border-blue-500/20 p-6 rounded-3xl transition-all group active:scale-95 ${isLocked ? 'opacity-30 grayscale cursor-not-allowed' : 'hover:bg-blue-600 hover:text-white'}`}
+          >
+            <Activity size={24} className="text-blue-500 group-hover:text-white" />
+            <span className="font-bold text-xs uppercase">Blue</span>
+          </button>
+
+          <button 
+            disabled={isLocked}
+            onClick={() => setCommand('ALARM')} 
+            className={`flex flex-col items-center gap-3 bg-orange-500/10 border border-orange-500/20 p-6 rounded-3xl transition-all group active:scale-95 ${isLocked ? 'opacity-30 grayscale cursor-not-allowed' : 'hover:bg-orange-600 hover:text-white'}`}
+          >
+            <Bell size={24} className="text-orange-500 group-hover:text-white" />
+            <span className="font-bold text-xs uppercase">Alarm</span>
+          </button>
+
+          <button 
+            disabled={isLocked}
+            onClick={() => setCommand('CLEAR')} 
+            className={`flex flex-col items-center gap-3 bg-slate-800/50 border border-slate-700 p-6 rounded-3xl transition-all group active:scale-95 ${isLocked ? 'opacity-30 grayscale cursor-not-allowed' : 'hover:bg-slate-700 hover:text-white'}`}
+          >
+            <Trash2 size={24} className="text-slate-400 group-hover:text-white" />
+            <span className="font-bold text-xs uppercase">Clear</span>
+          </button>
+        </div>
+
+        <div className="bg-black/40 rounded-3xl p-6 border border-white/5 relative">
+          {isSyncing && <div className="absolute inset-0 bg-cyan-500/10 animate-pulse" />}
+          <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-600 mb-2">Live Cloud State</p>
+          <div className="text-4xl font-mono font-bold text-cyan-400 tracking-tighter uppercase">
+            {currentCommand}
+          </div>
+        </div>
+
+        <div className="mt-8 text-center">
+            <p className="text-[8px] text-slate-700 uppercase tracking-widest leading-relaxed">
+                App ID: {appId}<br/>
+                Sync: Global 4s Cooldown Active
+            </p>
+        </div>
+      </div>
+    </div>
+  );
+}
