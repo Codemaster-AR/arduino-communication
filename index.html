@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MKR Cloud Controller</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans">
+    <div id="root"></div>
+
+    <!-- Firebase SDKs (Modular Version) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+
+        // Integrated Agronauts Config based on your snippet
+        const firebaseConfig = {
+            apiKey: "AIzaSyAcvUkTClt50kaJkwBnpU-ZeyqFlflxG10",
+            authDomain: "agronauts-ea979.firebaseapp.com",
+            projectId: "agronauts-ea979",
+            storageBucket: "agronauts-ea979.firebasestorage.app",
+            messagingSenderId: "402858856046",
+            appId: "1:402858856046:web:cd04957b6ca2d19353607f",
+            measurementId: "G-G2LWBQMKV5"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        let currentCommand = "NONE";
+        let userUid = null;
+
+        const render = () => {
+            const root = document.getElementById('root');
+            root.innerHTML = `
+                <div class="min-h-screen flex items-center justify-center p-4">
+                    <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden">
+                        
+                        <!-- Status Bar -->
+                        <div class="flex justify-between items-center mb-8">
+                            <div class="flex items-center gap-2">
+                                <div id="status-dot" class="w-2.5 h-2.5 bg-red-500 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.5)]"></div>
+                                <span id="status-text" class="text-[10px] font-bold tracking-widest text-slate-400 uppercase">Connecting...</span>
+                            </div>
+                            <i data-lucide="wifi" class="text-slate-700 w-4 h-4"></i>
+                        </div>
+
+                        <!-- Header -->
+                        <h1 class="text-3xl font-black italic tracking-tighter mb-1 uppercase text-white">MKR Controller</h1>
+                        <p class="text-slate-500 text-xs mb-8 tracking-wide uppercase font-bold">Project: Agronauts</p>
+
+                        <!-- Error Banner for Configuration Issues (Auth Not Enabled) -->
+                        <div id="auth-error-notice" class="hidden mb-6 p-4 bg-red-500/20 border border-red-500/50 rounded-2xl text-[10px] leading-relaxed text-red-100">
+                            <div class="flex gap-2 items-start">
+                                <i data-lucide="alert-circle" class="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5"></i>
+                                <div>
+                                    <strong class="block mb-1 text-red-400 uppercase tracking-tight">Setup Required</strong>
+                                    The error <code class="bg-black/30 px-1 rounded text-red-300 italic">auth/configuration-not-found</code> means Anonymous sign-in is disabled.
+                                    <ol class="list-decimal ml-4 mt-2 space-y-2">
+                                        <li>Open your <a href="https://console.firebase.google.com/project/agronauts-ea979/authentication/providers" target="_blank" class="underline text-cyan-400 font-bold">Firebase Auth Dashboard</a></li>
+                                        <li>Click <b>Add new provider</b> (or "Get Started" if first time)</li>
+                                        <li>Choose <b>Anonymous</b>, toggle <b>Enable</b>, and hit <b>Save</b></li>
+                                        <li>Come back here and refresh this page</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Main Controls -->
+                        <div class="grid grid-cols-2 gap-4 mb-10">
+                            <button onclick="updateCloud('RED')" class="flex flex-col items-center gap-3 bg-red-500/10 border border-red-500/20 p-6 rounded-3xl hover:bg-red-600 transition-all active:scale-95 group">
+                                <i data-lucide="radio" class="text-red-500 group-hover:text-white"></i>
+                                <span class="font-bold text-xs uppercase">Red</span>
+                            </button>
+                            <button onclick="updateCloud('BLUE')" class="flex flex-col items-center gap-3 bg-blue-500/10 border border-blue-500/20 p-6 rounded-3xl hover:bg-blue-600 transition-all active:scale-95 group">
+                                <i data-lucide="activity" class="text-blue-500 group-hover:text-white"></i>
+                                <span class="font-bold text-xs uppercase">Blue</span>
+                            </button>
+                            <button onclick="updateCloud('ALARM')" class="flex flex-col items-center gap-3 bg-orange-500/10 border border-orange-500/20 p-6 rounded-3xl hover:bg-orange-600 transition-all active:scale-95 group">
+                                <i data-lucide="bell" class="text-orange-500 group-hover:text-white"></i>
+                                <span class="font-bold text-xs uppercase">Alarm</span>
+                            </button>
+                            <button onclick="updateCloud('CLEAR')" class="flex flex-col items-center gap-3 bg-slate-800/50 border border-slate-700 p-6 rounded-3xl hover:bg-slate-700 transition-all active:scale-95 group">
+                                <i data-lucide="trash-2" class="text-slate-400 group-hover:text-white"></i>
+                                <span class="font-bold text-xs uppercase">Clear</span>
+                            </button>
+                        </div>
+
+                        <!-- Status Display -->
+                        <div class="bg-black/40 rounded-3xl p-6 border border-white/5 relative">
+                            <p class="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-600 mb-2">Live Cloud State</p>
+                            <div id="cmd-display" class="text-4xl font-mono font-bold text-cyan-400 tracking-tighter uppercase">
+                                ${currentCommand}
+                            </div>
+                            <div id="uid-display" class="text-[8px] font-mono text-slate-700 mt-2 truncate">
+                                UID: ${userUid ? userUid : 'Not Auth'}
+                            </div>
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="mt-8 pt-6 border-t border-slate-800 text-center">
+                            <p class="text-[8px] text-slate-600 uppercase font-bold tracking-widest">
+                                Firestore Path: controls/state
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            lucide.createIcons();
+        };
+
+        // Firebase Auth State Listener
+        onAuthStateChanged(auth, (user) => {
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+            const uidText = document.getElementById('uid-display');
+
+            if (user) {
+                userUid = user.uid;
+                if(dot) {
+                    dot.classList.replace('bg-red-500', 'bg-green-500');
+                    dot.style.boxShadow = '0 0 12px rgba(34,197,94,0.6)';
+                }
+                if(text) text.innerText = 'Online';
+                if(uidText) uidText.innerText = `UID: ${user.uid}`;
+                
+                // Start listening to the database once authenticated
+                listenToCloud();
+            } else {
+                userUid = null;
+                if(dot) dot.classList.replace('bg-green-500', 'bg-red-500');
+                if(text) text.innerText = 'Disconnected';
+                // Note: We don't automatically call signIn() here to avoid infinite loops if it fails
+            }
+        });
+
+        // Function to listen to Firestore updates
+        const listenToCloud = () => {
+            const docRef = doc(db, "controls", "state");
+            onSnapshot(docRef, (snap) => {
+                if (snap.exists()) {
+                    currentCommand = snap.data().currentCommand || "NONE";
+                    const display = document.getElementById('cmd-display');
+                    if (display) display.innerText = currentCommand;
+                }
+            }, (error) => {
+                console.error("Firestore read error:", error);
+                if (error.code === 'permission-denied') {
+                    console.error("Rules check needed: allow read, write: if request.auth != null;");
+                }
+            });
+        };
+
+        // Function to update Firestore
+        window.updateCloud = async (cmd) => {
+            if (!auth.currentUser) {
+                alert("Please enable Anonymous Auth in Firebase and refresh.");
+                return;
+            }
+            try {
+                const docRef = doc(db, "controls", "state"); 
+                await setDoc(docRef, { 
+                    currentCommand: cmd,
+                    updatedAt: new Date().toISOString(),
+                    lastUpdatedBy: auth.currentUser.uid
+                }, { merge: true });
+            } catch (e) {
+                console.error("Write failed:", e);
+                if (e.code === 'permission-denied') {
+                    alert("Firestore Permission Denied. Check your Database Rules.");
+                }
+            }
+        };
+
+        // Sign in function
+        const signIn = async () => {
+            try {
+                await signInAnonymously(auth);
+            } catch (err) {
+                console.error("SignIn failed:", err);
+                const text = document.getElementById('status-text');
+                if (text) text.innerText = 'Auth Required';
+                
+                // Show visual guidance for the specific configuration error
+                if (err.code === 'auth/configuration-not-found') {
+                    const notice = document.getElementById('auth-error-notice');
+                    if (notice) {
+                        notice.classList.remove('hidden');
+                        lucide.createIcons(); // Update icons inside the newly visible block
+                    }
+                }
+            }
+        };
+
+        // Initial Render and Sign In call
+        render();
+        signIn();
+
+    </script>
+</body>
+</html>
