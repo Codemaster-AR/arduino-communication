@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MKR Cloud Controller v2</title>
+    <title>MKR Cloud Controller v3</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=JetBrains+Mono:wght@700&display=swap');
@@ -66,16 +66,19 @@
             </div>
         </div>
 
-        <div class="mt-8 text-center">
-            <p id="app-path-debug" class="text-[8px] text-slate-800 uppercase tracking-[0.3em] leading-relaxed">
+        <div class="mt-8 flex flex-col items-center gap-2">
+            <p id="app-path-debug" class="text-[8px] text-slate-800 uppercase tracking-[0.3em]">
                 Hardware Sync Protocol Active
             </p>
+            <div class="px-3 py-1 bg-slate-800/50 rounded-full border border-slate-700">
+                <p class="text-[10px] font-black text-slate-500 tracking-tighter uppercase">v3</p>
+            </div>
         </div>
     </div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
 
         const firebaseConfig = {
@@ -127,7 +130,6 @@
         });
 
         function startSync() {
-            // Path Rule 1 Enforcement: /artifacts/{appId}/public/data/controls/state
             const commandDoc = doc(db, 'artifacts', actualAppId, 'public', 'data', 'controls', 'state');
             
             onSnapshot(commandDoc, (docSnap) => {
@@ -136,9 +138,9 @@
                     commandDisplay.innerText = data.currentCommand || 'NONE';
                     
                     if (data.updatedAt) {
-                        const serverTime = new Date(data.updatedAt).getTime();
+                        const serverTime = data.updatedAt.toDate ? data.updatedAt.toDate().getTime() : new Date(data.updatedAt).getTime();
                         const timeDiff = Date.now() - serverTime;
-                        // 4s cooldown lock logic
+                        
                         if (timeDiff < 4000 && timeDiff >= 0) {
                             applyLock(4000 - timeDiff);
                         }
@@ -152,9 +154,11 @@
         }
 
         function applyLock(duration) {
+            if (duration <= 0) return;
             isLocked = true;
             lockIndicator.classList.remove('hidden');
             toggleButtons(true);
+            
             if (lockTimeout) clearTimeout(lockTimeout);
             lockTimeout = setTimeout(() => {
                 isLocked = false;
@@ -186,10 +190,13 @@
                 const commandDoc = doc(db, 'artifacts', actualAppId, 'public', 'data', 'controls', 'state');
                 await setDoc(commandDoc, {
                     currentCommand: cmd,
-                    updatedAt: new Date().toISOString()
+                    updatedAt: serverTimestamp()
                 }, { merge: true });
             } catch (err) {
                 console.error("Write Operation Failed:", err);
+                isLocked = false;
+                lockIndicator.classList.add('hidden');
+                toggleButtons(false);
             } finally {
                 syncPulse.classList.add('hidden');
             }
