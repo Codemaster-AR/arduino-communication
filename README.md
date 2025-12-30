@@ -170,4 +170,5 @@ void triggerAlarm() {
 * **Visual Feedback:** The OLED display shows connection status and current modes.
 * **LED Indicators:** RGB LEDs change color based on the AI's response.
 * **Audible Alarm:** Uses the onboard buzzer for the "ALARM" state.
+* https://docs.google.com/document/d/1LEeH-elrM0l-2gsYv9CXMIsAE65ZaXYOnJdxyaRQBgI/edit?usp=sharing
 
