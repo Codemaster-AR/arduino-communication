@@ -35,50 +35,70 @@ Copy and paste the following code into your Arduino IDE.
 > **Security Note:** This code contains a hardcoded API key and WiFi credentials. For public repositories, consider using a `config.h` file or Secret tabs in the Arduino IDE to protect your data.
 
 ```cpp
+// Download this library by Arduino:
 #include <Arduino_MKRIoTCarrier.h>
+// Download this library by Arduino:
 #include <WiFiNINA.h>
+// Download this library by Benoît Blanchon
+#include <ArduinoJson.h>
 
-// Groq API Configuration
-const char* apiKey = "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"; 
-const char* groqHost = "api.groq.com";
-const char* groqModel = "llama-3.1-8b-instant";
+
 
 // WiFi Credentials
-char ssid[] = "WIFI name caps sensitive"; 
-char pass[] = "password"; 
+char ssid[] = "Wifi name"; 
+char pass[] = "Wifi password"; 
+
+// Firebase Project Details
+const char* firebaseHost = "firestore.googleapis.com";
+const char* projectId = "agronauts-ea979";
+const char* appId = "default-app-id"; 
 
 MKRIoTCarrier carrier;
 WiFiSSLClient client;
 
 unsigned long lastCheck = 0;
-const unsigned long interval = 3000; 
+const unsigned long interval = 1500; 
+
+// Track the last command to prevent screen flickering
+String lastCommand = "";
 
 void setup() {
   Serial.begin(9600);
   
-  CARRIER_CASE = false;
+  // Initialize Carrier
+  CARRIER_CASE = false; 
   if (!carrier.begin()) {
-    Serial.println("Carrier error!");
+    Serial.println("Carrier initialization failed!");
     while (1);
   }
 
-  carrier.Buttons.updateConfig(130);
+  // Flash LEDs once to show hardware is alive
+  carrier.leds.fill(carrier.leds.Color(0, 50, 0), 0, 5);
+  carrier.leds.show();
+  delay(500);
+  carrier.leds.fill(carrier.leds.Color(0, 0, 0), 0, 5);
+  carrier.leds.show();
 
+  // Force screen refresh
   carrier.display.fillScreen(ST77XX_BLACK);
-  carrier.display.setCursor(20, 100);
   carrier.display.setTextColor(ST77XX_WHITE);
   carrier.display.setTextSize(2);
-  carrier.display.println("Connecting WiFi...");
+  carrier.display.setCursor(20, 50);
+  carrier.display.println("SYSTEM START");
+  carrier.display.setCursor(20, 80);
+  carrier.display.println("Connecting...");
 
-  while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
-    delay(2000);
-    Serial.print(".");
+  // Connect to WiFi
+  int status = WL_IDLE_STATUS;
+  while (status != WL_CONNECTED) {
+    status = WiFi.begin(ssid, pass);
+    delay(3000);
   }
 
   carrier.display.fillScreen(ST77XX_BLACK);
   carrier.display.setCursor(20, 100);
-  carrier.display.println("Groq Link Active!");
-  delay(1000);
+  carrier.display.setTextColor(ST77XX_GREEN);
+  carrier.display.println("CLOUD ACTIVE");
 }
 
 void loop() {
@@ -88,67 +108,119 @@ void loop() {
   }
 }
 
-String askGroqForCommand() {
-  if (client.connect(groqHost, 443)) {
-    String url = "/v1/chat/completions";
+String getFirestoreCommand() {
+  client.setTimeout(8000); 
+
+  if (client.connect(firebaseHost, 443)) {
+    String path = "/v1/projects/" + String(projectId) + 
+                  "/databases/(default)/documents/artifacts/" + String(appId) + 
+                  "/public/data/controls/state";
     
-    // Updated prompt for absolute clarity
-    String systemPrompt = "Respond ONLY with the word: RED, BLUE, ALARM, or CLEAR. No punctuation.";
-    String payload = "{\"model\": \"" + String(groqModel) + "\", \"messages\": [";
-    payload += "{\"role\": \"system\", \"content\": \"" + systemPrompt + "\"},";
-    payload += "{\"role\": \"user\", \"content\": \"Check database.\"}";
-    payload += "], \"temperature\": 0.1}";
-
-    client.print("POST " + url + " HTTP/1.1\r\n");
-    client.print("Host: " + String(groqHost) + "\r\n");
-    client.print("Authorization: Bearer " + String(apiKey) + "\r\n");
-    client.print("Content-Type: application/json\r\n");
-    client.print("Content-Length: " + String(payload.length()) + "\r\n");
+    client.print("GET " + path + " HTTP/1.1\r\n");
+    client.print("Host: " + String(firebaseHost) + "\r\n");
+    client.print("Accept: application/json\r\n");
     client.print("Connection: close\r\n\r\n");
-    client.print(payload);
 
+    // Skip headers
+    unsigned long startHeader = millis();
     while (client.connected()) {
+      if (millis() - startHeader > 4000) break;
       String line = client.readStringUntil('\n');
       if (line == "\r") break;
     }
 
+    // Read response body carefully
     String response = "";
+    unsigned long startRead = millis();
+    
+    // Wait for initial data
+    while(client.connected() && !client.available() && (millis() - startRead < 3000));
+    
+    // Read the body
     while (client.available()) {
       response += (char)client.read();
+      if (response.length() > 3000) break; // Memory guard
     }
     client.stop();
 
-    response.toUpperCase();
-    if (response.indexOf("RED") >= 0) return "RED";
-    if (response.indexOf("BLUE") >= 0) return "BLUE";
-    if (response.indexOf("ALARM") >= 0) return "ALARM";
-    if (response.indexOf("CLEAR") >= 0) return "CLEAR";
+    // Clean response: find first { and last }
+    int firstBrace = response.indexOf('{');
+    int lastBrace = response.lastIndexOf('}');
+    
+    if (firstBrace == -1 || lastBrace == -1 || lastBrace < firstBrace) {
+      return "EMPTY_RES";
+    }
+    
+    response = response.substring(firstBrace, lastBrace + 1);
+
+    // Dynamic document handles larger Google responses
+    DynamicJsonDocument doc(3072); 
+    DeserializationError error = deserializeJson(doc, response);
+
+    if (!error) {
+      if (doc.containsKey("fields") && doc["fields"].containsKey("currentCommand")) {
+        const char* cmd = doc["fields"]["currentCommand"]["stringValue"];
+        if (cmd) return String(cmd);
+      }
+      return "NO_FIELD";
+    } else {
+      Serial.print("Json Error: ");
+      Serial.println(error.c_str());
+      return "PARSE_ERR";
+    }
+  } else {
+    return "CONN_ERR";
   }
   return "NONE";
 }
 
 void checkCloudCommand() {
-  Serial.println("Polling Groq...");
-  String command = askGroqForCommand();
-  Serial.println("Action: " + command);
+  String command = getFirestoreCommand();
   
-  if (command == "RED") updateHardware(255, 0, 0, "RED MODE");
-  else if (command == "BLUE") updateHardware(0, 0, 255, "BLUE MODE");
-  else if (command == "ALARM") triggerAlarm();
-  else if (command == "CLEAR") updateHardware(0, 0, 0, "OFF");
+  if (command != lastCommand) {
+    lastCommand = command;
+    
+    carrier.display.fillScreen(ST77XX_BLACK);
+    carrier.display.setCursor(20, 40);
+    carrier.display.setTextSize(2);
+    carrier.display.setTextColor(ST77XX_WHITE);
+    carrier.display.print("CLOUD: ");
+    
+    if (command == "PARSE_ERR" || command == "CONN_ERR" || command == "EMPTY_RES") {
+       carrier.display.setTextColor(ST77XX_RED);
+    } else {
+       carrier.display.setTextColor(ST77XX_GREEN);
+    }
+    carrier.display.println(command);
+    
+    if (command == "RED") {
+      updateHardware(255, 0, 0, "RED ALERT");
+    } else if (command == "BLUE") {
+      updateHardware(0, 0, 255, "BLUE MODE");
+    } else if (command == "ALARM") {
+      triggerAlarm();
+    } else if (command == "CLEAR") {
+      updateHardware(0, 0, 0, "READY");
+    }
+  }
 }
 
 void updateHardware(int r, int g, int b, String label) {
   carrier.leds.fill(carrier.leds.Color(r, g, b), 0, 5);
   carrier.leds.show();
-  carrier.display.fillScreen(ST77XX_BLACK);
-  carrier.display.setCursor(40, 100);
+  
+  carrier.display.setCursor(20, 100);
   carrier.display.setTextColor(ST77XX_CYAN);
+  carrier.display.setTextSize(3);
   carrier.display.println(label);
 }
 
 void triggerAlarm() {
-  carrier.display.fillScreen(ST77XX_RED);
+  carrier.display.setCursor(20, 100);
+  carrier.display.setTextColor(ST77XX_RED);
+  carrier.display.setTextSize(3);
+  carrier.display.println("ALARM!");
+
   for(int i=0; i<3; i++) {
     carrier.leds.fill(carrier.leds.Color(255, 0, 0), 0, 5);
     carrier.leds.show();
