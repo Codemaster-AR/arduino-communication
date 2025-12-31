@@ -32,12 +32,12 @@ Before uploading the code, ensure you have the following installed in your Ardui
 Copy and paste the following code into your Arduino IDE.
 
 > [!WARNING]
-> **Security Note:** This code contains a hardcoded API key and WiFi credentials. For public repositories, consider using a `config.h` file or Secret tabs in the Arduino IDE to protect your data.
+> **Note:** You must configure your Arduino IoT kit and enter your Wi-Fi parameters in the code before running it.
 
 ```cpp
-// Download this library by Arduino:
+// Download this library from Arduino:
 #include <Arduino_MKRIoTCarrier.h>
-// Download this library by Arduino:
+// Download this library from Arduino:
 #include <WiFiNINA.h>
 // Download this library by Benoît Blanchon
 #include <ArduinoJson.h>
